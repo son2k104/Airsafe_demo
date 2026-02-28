@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<title>AIRSAFE – Smart Air Quality System</title>
+
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+
+<style>
+body{
+  font-family: Arial;
+  background: linear-gradient(135deg,#4facfe,#00f2fe);
+  display:flex;justify-content:center;align-items:center;
+  height:100vh;margin:0;
+}
+.app{
+  background:#fff;width:390px;padding:18px;
+  border-radius:16px;box-shadow:0 10px 25px rgba(0,0,0,.2);
+  text-align:center;
+}
+button{
+  width:100%;padding:12px;border:none;border-radius:10px;
+  background:#007bff;color:white;font-size:16px;
+  cursor:pointer;
+}
+button:disabled{ background:#ccc; }
+.card{
+  margin-top:12px;padding:12px;border-radius:12px;
+  color:white;display:none;
+}
+#map{height:230px;margin-top:12px;border-radius:12px;display:none;}
+canvas{margin-top:10px;}
+.alert{margin-top:10px;padding:10px;border-radius:8px;display:none;}
+.small{font-size:12px;margin-top:6px;}
+.loading{margin-top:10px;display:none;color:#666;}
+</style>
+</head>
+
+<body>
+<div class="app">
+<h2>🌍 AIRSAFE PRO</h2>
+<p>Hệ thống cảnh báo ô nhiễm không khí thông minh</p>
+
+<button id="btn">Xem chất lượng không khí</button>
+<div id="loading" class="loading">⏳ Đang tải...</div>
+
+<div id="result" class="card">
+  <div id="aqi" style="font-size:34px;font-weight:bold"></div>
+  <div id="level"></div>
+  <div id="recommend"></div>
+  <div id="detail" class="small"></div>
+  <div id="analysis" class="small"></div>
+</div>
+
+<div id="alert" class="alert"></div>
+<div id="map"></div>
+<canvas id="chart" height="150"></canvas>
+
+<p style="font-size:12px;color:#777;margin-top:6px">
+Demo CNTT – Quốc Học Quy Nhơn
+</p>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="config.js"></script>
+<script>
+/* ===== CONFIG ===== */
+const WAQI_TOKEN = "45c14f75c6ea6326335647f029c9f2fabe0171df";
+
+/* ===== DOM ===== */
+const btn = document.getElementById("btn");
+const loading = document.getElementById("loading");
+const resultBox = document.getElementById("result");
+const aqiEl = document.getElementById("aqi");
+const levelEl = document.getElementById("level");
+const recommendEl = document.getElementById("recommend");
+const detailEl = document.getElementById("detail");
+const analysisEl = document.getElementById("analysis");
+const alertBox = document.getElementById("alert");
+const mapDiv = document.getElementById("map");
+
+let map, marker, circle, chart;
+
+/* ===== AQI EPA ===== */
+function calcAQI_PM25(pm){
+ if(pm<=12) return pm/12*50;
+ if(pm<=35.4) return 50+(pm-12)/(35.4-12)*50;
+ if(pm<=55.4) return 100+(pm-35.4)/(55.4-35.4)*50;
+ if(pm<=150.4) return 150+(pm-55.4)/(150.4-55.4)*50;
+ return 200;
+}
+
+function getLevel(aqi){
+ if(aqi<=50) return ["TỐT","#2ecc71"];
+ if(aqi<=100) return ["TRUNG BÌNH","#f1c40f"];
+ if(aqi<=150) return ["KÉM","#e67e22"];
+ if(aqi<=200) return ["XẤU","#e74c3c"];
+ return ["NGUY HẠI","#9b59b6"];
+}
+
+/* ===== DECISION ENGINE ===== */
+function decide(ow, waqi){
+  if(!waqi || waqi<=0) return [ow,""];
+  const diff=Math.abs(ow-waqi);
+  const percent=diff/((ow+waqi)/2)*100;
+  if(percent<15) return [Math.round((ow+waqi)/2),""];
+  return [ow,""];
+}
+
+/* ===== MAIN ===== */
+btn.onclick = async ()=>{
+ loading.style.display="block";
+ btn.disabled=true;
+
+ navigator.geolocation.getCurrentPosition(async pos=>{
+  const {latitude:lat, longitude:lon}=pos.coords;
+
+  try{
+   const [owRes, wRes] = await Promise.all([
+    fetch(`/api/air?lat=${lat}&lon=${lon}`),
+    fetch(`https://api.waqi.info/feed/geo:${lat};${lon}/?token=${WAQI_TOKEN}`)
+   ]);
+
+   const owData = await owRes.json();
+   const wData = await wRes.json();
+
+   const pm25 = owData.list[0].components.pm2_5;
+   const aqiOW = Math.round(calcAQI_PM25(pm25));
+   const aqiWAQI = wData.status==="ok" ? wData.data.aqi : 0;
+
+   const [aqiFinal,note] = decide(aqiOW,aqiWAQI);
+   const [level,color] = getLevel(aqiFinal);
+
+   /* DISPLAY */
+   resultBox.style.display="block";
+   resultBox.style.background=`linear-gradient(135deg,${color},${color}dd)`;
+   aqiEl.innerText="AQI: "+aqiFinal;
+   levelEl.innerText=level;
+   recommendEl.innerText=aqiFinal<=100?"👍 An toàn ngoài trời":"⚠️ Hạn chế ra ngoài";
+   detailEl.innerText=`PM2.5: ${pm25.toFixed(1)} µg/m³ | OW:${aqiOW} WAQI:${aqiWAQI}`;
+   analysisEl.innerText="🤖 "+note;
+
+   /* ALERT */
+   if(aqiFinal>150){
+    alertBox.style.display="block";
+    alertBox.style.background="#9b59b6";
+    alertBox.innerText="⛔ Ô nhiễm nguy hại!";
+   }else if(aqiFinal>120){
+    alertBox.style.display="block";
+    alertBox.style.background="#e74c3c";
+    alertBox.innerText="⚠️ Không khí kém!";
+   }else{
+    alertBox.style.display="none";
+   }
+
+   /* MAP */
+   mapDiv.style.display="block";
+   if(!map){
+    map=L.map("map").setView([lat,lon],13);
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png").addTo(map);
+   }else map.setView([lat,lon],13);
+
+   if(marker) map.removeLayer(marker);
+   marker=L.marker([lat,lon]).addTo(map).bindPopup("AQI: "+aqiFinal);
+
+   if(circle) map.removeLayer(circle);
+   circle=L.circle([lat,lon],{radius:2000,color,fillColor:color,fillOpacity:0.3}).addTo(map);
+
+   /* CHART */
+   const trend=[aqiFinal];
+   for(let i=1;i<=6;i++){
+    trend.push(Math.max(20,Math.min(180,trend[i-1]+(Math.random()*10-5))));
+   }
+
+   if(chart) chart.destroy();
+   chart=new Chart(document.getElementById("chart"),{
+    type:"line",
+    data:{
+     labels:["Now","+1h","+2h","+3h","+4h","+5h","+6h"],
+     datasets:[{data:trend,borderColor:color,backgroundColor:color+"33",fill:true}]
+    },
+    options:{plugins:{legend:{display:false}},scales:{y:{min:0,max:200}}}
+   });
+
+  }catch(err){
+   alert("Lỗi lấy dữ liệu!");
+  }
+
+  loading.style.display="none";
+  btn.disabled=false;
+
+ },()=>alert("Không thể lấy vị trí"));
+};
+</script>
+</body>
+</html>
