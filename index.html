@@ -63,7 +63,6 @@ Demo CNTT – Quốc Học Quy Nhơn
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-<script src="config.js"></script>
 <script>
 /* ===== CONFIG ===== */
 const WAQI_TOKEN = "45c14f75c6ea6326335647f029c9f2fabe0171df";
@@ -117,17 +116,24 @@ btn.onclick = async ()=>{
   const {latitude:lat, longitude:lon}=pos.coords;
 
   try{
-   const [owRes, wRes] = await Promise.all([
-    fetch(`/api/air?lat=${lat}&lon=${lon}`),
-    fetch(`https://api.waqi.info/feed/geo:${lat};${lon}/?token=${WAQI_TOKEN}`)
-   ]);
+   const owRes = await fetch(`/api/air?lat=${lat}&lon=${lon}`);
+let wData = null;
+
+try {
+  const wRes = await fetch(`https://api.waqi.info/feed/geo:${lat};${lon}/?token=${WAQI_TOKEN}`);
+  wData = await wRes.json();
+} catch(e) {
+  console.log("WAQI lỗi, bỏ qua");
+}
 
    const owData = await owRes.json();
-   const wData = await wRes.json();
 
    const pm25 = owData.list[0].components.pm2_5;
    const aqiOW = Math.round(calcAQI_PM25(pm25));
-   const aqiWAQI = wData.status==="ok" ? wData.data.aqi : 0;
+   const aqiWAQI =
+    wData && wData.status === "ok"
+      ? wData.data.aqi
+      : 0;
 
    const [aqiFinal,note] = decide(aqiOW,aqiWAQI);
    const [level,color] = getLevel(aqiFinal);
